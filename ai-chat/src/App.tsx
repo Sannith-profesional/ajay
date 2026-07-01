@@ -4,7 +4,7 @@ import { MessageList } from './components/MessageList';
 import { ChatInput } from './components/ChatInput';
 import { Sidebar } from './components/Sidebar';
 import { RightPanel } from './components/RightPanel';
-import { MailLogin, loadUser, clearUser, type UserProfile } from './components/MailLogin';
+import { MailLogin as _MailLogin, loadUser, saveUser, clearUser, type UserProfile } from './components/MailLogin';
 import './App.css';
 
 const THEMES = ['#7c6fd6', '#2dd4bf', '#e11d48', '#0d9488', '#d97706', '#0284c7'];
@@ -38,7 +38,18 @@ export default function App() {
     stopGenerating: chatStop,
   } = chat;
 
-  const [user, setUser] = useState<UserProfile | null>(() => loadUser());
+  // Open-by-default: anyone visiting the app gets an instant Guest profile so
+  // there's no login gate, no email capture, and no server-side sign-in call.
+  // The Guest identity is persisted to localStorage so reloads stay frictionless;
+  // users can still opt into a name/email via the MailLogin screen (kept for
+  // sign-in flow but never used as a blocker). Sign-out cycles back to Guest.
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    const existing = loadUser();
+    if (existing) return existing;
+    const guest: UserProfile = { name: 'Guest', email: 'guest@nexusai.local', joinedAt: Date.now() };
+    saveUser(guest);
+    return guest;
+  });
   const [theme, setTheme] = useState('dark');
   const [accent, setAccent] = useState('#7c6fd6');
   const [search, setSearch] = useState('');
@@ -158,9 +169,13 @@ export default function App() {
   const activeConvo = conversations.find(c => c.id === activeId);
   const tokens = estimateTokens(conversations.find(c => c.id === activeId)?.messages ?? []);
 
-  if (!user) {
-    return <MailLogin onSignedIn={setUser} />;
-  }
+  // Login is no longer a gate — chat is always rendered. If `user` were ever
+  // null (e.g. someone manually clears localStorage), auto-recover to Guest.
+  const effectiveUser: UserProfile = user ?? (() => {
+    const guest: UserProfile = { name: 'Guest', email: 'guest@nexusai.local', joinedAt: Date.now() };
+    saveUser(guest);
+    return guest;
+  })();
 
   return (
     <div className={`app ${showPanel ? 'panel-open' : ''}`}>
@@ -175,8 +190,14 @@ export default function App() {
         avgLatency={Math.round(avgLatency)}
         modelName={params.model}
         onSend={sendMessage}
-        user={user}
-        onSignOut={() => { clearUser(); setUser(null); }}
+        user={effectiveUser}
+        onSignOut={() => {
+          // Sign-out cycles back to a fresh Guest — never returns to the login gate.
+          clearUser();
+          const guest: UserProfile = { name: 'Guest', email: 'guest@nexusai.local', joinedAt: Date.now() };
+          saveUser(guest);
+          setUser(guest);
+        }}
       />
 
       <div className="main">
@@ -231,9 +252,9 @@ export default function App() {
             onToggleStar={toggleStar}
             onSimplify={() => sendMessage('Explain the previous reply in simpler terms')}
             onExpand={() => sendMessage('Give me more detail on the previous reply')}
-            onRegenerate={regenLast}
-            user={user}
-          />
+        onRegenerate={regenLast}
+        user={effectiveUser}
+      />
         </div>
 
         <div className="input-area">
